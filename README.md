@@ -1,92 +1,181 @@
 # rusty_dlna
 
-A new Flutter FFI plugin project.
+A Flutter plugin for DLNA/UPnP device discovery and media casting, powered by Rust.
 
-## Getting Started
+[![pub package](https://img.shields.io/pub/v/rusty_dlna.svg)](https://pub.dev/packages/rusty_dlna)
 
-This project is a starting point for a Flutter
-[FFI plugin](https://flutter.dev/to/ffi-package),
-a specialized package that includes native code directly invoked with Dart FFI.
+## Features
 
-## Project structure
+- 🔍 **Device Discovery** - Scan for DLNA/UPnP devices on your local network
+- 📺 **Media Casting** - Cast video URLs to smart TVs and projectors
+- ▶️ **Playback Control** - Play, pause, stop, and seek
+- 🔊 **Volume Control** - Get/set volume and mute
+- 📊 **Status Monitoring** - Get playback position and transport state
+- 🌐 **Wake on LAN** - Remote wake devices by MAC address
 
-This template uses the following structure:
+## Supported Platforms
 
-* `src`: Contains the native source code, and a CmakeFile.txt file for building
-  that source code into a dynamic library.
+- Android
+- iOS
+- macOS
+- Linux
+- Windows
 
-* `lib`: Contains the Dart code that defines the API of the plugin, and which
-  calls into the native code using `dart:ffi`.
+## Installation
 
-* platform folders (`android`, `ios`, `windows`, etc.): Contains the build files
-  for building and bundling the native code library with the platform application.
-
-## Building and bundling native code
-
-The `pubspec.yaml` specifies FFI plugins as follows:
-
-```yaml
-  plugin:
-    platforms:
-      some_platform:
-        ffiPlugin: true
-```
-
-This configuration invokes the native build for the various target platforms
-and bundles the binaries in Flutter applications using these FFI plugins.
-
-This can be combined with dartPluginClass, such as when FFI is used for the
-implementation of one platform in a federated plugin:
+Add to your `pubspec.yaml`:
 
 ```yaml
-  plugin:
-    implements: some_other_plugin
-    platforms:
-      some_platform:
-        dartPluginClass: SomeClass
-        ffiPlugin: true
+dependencies:
+  rusty_dlna: ^0.0.1
 ```
 
-A plugin can have both FFI and method channels:
+## Setup
 
-```yaml
-  plugin:
-    platforms:
-      some_platform:
-        pluginClass: SomeName
-        ffiPlugin: true
+### Initialize the library
+
+```dart
+import 'package:rusty_dlna/api/cast.dart';
+import 'package:rusty_dlna/frb_generated.dart';
+
+void main() async {
+  await RustLib.init();
+  runApp(MyApp());
+}
 ```
 
-The native build systems that are invoked by FFI (and method channel) plugins are:
+### Platform-specific configuration
 
-* For Android: Gradle, which invokes the Android NDK for native builds.
-  * See the documentation in android/build.gradle.
-* For iOS and MacOS: Xcode, via CocoaPods.
-  * See the documentation in ios/rusty_dlna.podspec.
-  * See the documentation in macos/rusty_dlna.podspec.
-* For Linux and Windows: CMake.
-  * See the documentation in linux/CMakeLists.txt.
-  * See the documentation in windows/CMakeLists.txt.
+#### Android
 
-## Binding to native code
+Add network permissions to `android/app/src/main/AndroidManifest.xml`:
 
-To use the native code, bindings in Dart are needed.
-To avoid writing these by hand, they are generated from the header file
-(`src/rusty_dlna.h`) by `package:ffigen`.
-Regenerate the bindings by running `dart run ffigen --config ffigen.yaml`.
+```xml
+<uses-permission android:name="android.permission.INTERNET"/>
+<uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+```
 
-## Invoking native code
+#### macOS
 
-Very short-running native functions can be directly invoked from any isolate.
-For example, see `sum` in `lib/rusty_dlna.dart`.
+Add network entitlements to `macos/Runner/DebugProfile.entitlements` and `macos/Runner/Release.entitlements`:
 
-Longer-running functions should be invoked on a helper isolate to avoid
-dropping frames in Flutter applications.
-For example, see `sumAsync` in `lib/rusty_dlna.dart`.
+```xml
+<key>com.apple.security.network.client</key>
+<true/>
+<key>com.apple.security.network.server</key>
+<true/>
+```
 
-## Flutter help
+#### iOS
 
-For help getting started with Flutter, view our
-[online documentation](https://docs.flutter.dev), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Add to `ios/Runner/Info.plist`:
 
+```xml
+<key>NSLocalNetworkUsageDescription</key>
+<string>This app needs local network access to discover DLNA devices</string>
+<key>NSBonjourServices</key>
+<array>
+    <string>_ssdp._udp</string>
+</array>
+```
+
+## Usage
+
+### Scan for devices
+
+```dart
+final devices = await scanProjectors(timeoutSecs: BigInt.from(5));
+
+for (final device in devices) {
+  print('Found: ${device.friendlyName} at ${device.ip}');
+}
+```
+
+### Cast a video
+
+```dart
+final device = devices.first;
+await device.castVideo(videoUrl: 'http://example.com/video.mp4');
+```
+
+### Playback control
+
+```dart
+await device.play();
+await device.pause();
+await device.stop();
+await device.seek(targetTime: '00:05:00'); // HH:MM:SS format
+```
+
+### Volume control
+
+```dart
+await device.setVolume(volume: 50);
+final currentVolume = await device.getVolume();
+await device.setMute(mute: true);
+```
+
+### Get playback status
+
+```dart
+// Get position as formatted strings (HH:MM:SS)
+final (current, total) = await device.getPositionInfo();
+print('Progress: $current / $total');
+
+// Get position in seconds
+final (currentSec, totalSec) = await device.getPositionInfoSec();
+
+// Get transport state
+final state = await device.getTransportInfo();
+// TransportState: Playing, Paused, Stopped, Transitioning, NoMedia, Unknown
+```
+
+### Wake on LAN
+
+```dart
+await wakeOnLan(macAddress: 'AA:BB:CC:11:22:33');
+```
+
+## API Reference
+
+### ProjectorInfo
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `friendlyName` | `String` | Device display name |
+| `ip` | `String` | Device IP address |
+| `locationXmlUrl` | `String` | UPnP description URL |
+| `avTransportUrl` | `String?` | AVTransport control URL |
+| `renderingControlUrl` | `String?` | RenderingControl URL |
+
+### ProjectorInfo Methods
+
+| Method | Description |
+|--------|-------------|
+| `castVideo(videoUrl)` | Cast video and start playback |
+| `play()` | Resume playback |
+| `pause()` | Pause playback |
+| `stop()` | Stop playback |
+| `seek(targetTime)` | Seek to position (HH:MM:SS) |
+| `setVolume(volume)` | Set volume (0-100) |
+| `getVolume()` | Get current volume |
+| `setMute(mute)` | Set mute state |
+| `getPositionInfo()` | Get position as strings |
+| `getPositionInfoSec()` | Get position in seconds |
+| `getTransportInfo()` | Get playback state |
+
+### Global Functions
+
+| Function | Description |
+|----------|-------------|
+| `scanProjectors(timeoutSecs)` | Discover DLNA devices |
+| `wakeOnLan(macAddress)` | Send Wake-on-LAN packet |
+
+## Example
+
+See the [example](example/) directory for a complete demo app.
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.

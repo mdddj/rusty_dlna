@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<key>com.apple.security.app-sandbox</key>
-	<true/>
-</dict>
+	<dict>
+		<key>com.apple.security.app-sandbox</key>
+		<true/>
+		<!-- 添加以下两行：允许作为客户端（发送请求） -->
+		<key>com.apple.security.network.client</key>
+		<true/>
+
+		<!-- 添加以下两行：允许作为服务端（绑定端口接收 SSDP 回包） -->
+		<key>com.apple.security.network.server</key>
+		<true/>
+	</dict>
 </plist>

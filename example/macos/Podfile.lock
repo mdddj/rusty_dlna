@@ -1,0 +1,21 @@
+PODS:
+  - FlutterMacOS (1.0.0)
+  - rusty_dlna (0.0.1)
+
+DEPENDENCIES:
+  - FlutterMacOS (from `Flutter/ephemeral`)
+  - rusty_dlna (from `Flutter/ephemeral/.symlinks/plugins/rusty_dlna/macos`)
+
+EXTERNAL SOURCES:
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+  rusty_dlna:
+    :path: Flutter/ephemeral/.symlinks/plugins/rusty_dlna/macos
+
+SPEC CHECKSUMS:
+  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  rusty_dlna: 04f3e22e9465a1b2ff090ee137f950fb8c7341ea
+
+PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
+
+COCOAPODS: 1.16.2
