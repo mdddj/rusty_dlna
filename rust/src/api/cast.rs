@@ -237,7 +237,23 @@ pub async fn scan_projectors(timeout_secs: u64) -> Result<Vec<ProjectorInfo>> {
     // 修复点 2: 这返回的是一个 Stream，不是 Vec
     let mut stream = ssdp_client::search(&search_target, timeout, 2, None)
         .await
-        .map_err(|e| anyhow::anyhow!("SSDP search failed: {}", e))?;
+        .map_err(|e| {
+            let err_msg = e.to_string();
+            if err_msg.contains("No route to host") || err_msg.contains("os error 65") {
+                anyhow::anyhow!(
+                    "Network connection failed. Please check:\n\
+                    1. Device is connected to WiFi or local network\n\
+                    2. App has network permissions (check platform-specific setup)\n\
+                    3. Firewall is not blocking local network access\n\
+                    4. VPN is disabled (if enabled, try disabling it)\n\
+                    5. Device and DLNA devices are on the same local network\n\
+                    Original error: {}",
+                    err_msg
+                )
+            } else {
+                anyhow::anyhow!("SSDP search failed: {}", err_msg)
+            }
+        })?;
 
     let mut devices = Vec::new();
 

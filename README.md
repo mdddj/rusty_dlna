@@ -172,6 +172,38 @@ await wakeOnLan(macAddress: 'AA:BB:CC:11:22:33');
 | `scanProjectors(timeoutSecs)` | Discover DLNA devices |
 | `wakeOnLan(macAddress)` | Send Wake-on-LAN packet |
 
+## Troubleshooting
+
+### "No route to host" error (os error 65)
+
+This error typically occurs when:
+
+1. **Device not connected to network** - Ensure your device is connected to WiFi or Ethernet
+2. **Missing network permissions** - Check platform-specific setup above
+3. **Firewall blocking** - System firewall may block UDP multicast traffic
+4. **VPN interference** - Try disabling VPN temporarily
+5. **Different networks** - Device and DLNA devices must be on the same local network
+
+**Solutions:**
+
+- **Android**: Verify all permissions in AndroidManifest.xml are added
+- **iOS**: Check Info.plist has NSLocalNetworkUsageDescription and NSBonjourServices
+- **macOS**: Ensure network entitlements are properly configured
+- **All platforms**: Try connecting to the same WiFi network as your DLNA device
+
+### No devices found
+
+- Increase scan timeout: `scanProjectors(timeoutSecs: BigInt.from(10))`
+- Ensure DLNA device is powered on and connected to network
+- Check if device supports UPnP/DLNA protocol
+- Try scanning multiple times (some devices respond slowly)
+
+### Cast fails but device is found
+
+- Verify the video URL is accessible from the DLNA device's network
+- Some devices only support specific video formats (MP4, MKV, etc.)
+- Check if device's `avTransportUrl` is not null
+
 ## Example
 
 See the [example](example/) directory for a complete demo app.
