@@ -9,8 +9,8 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 flutter_rust_bridge = "=2.11.1"
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls",
     "json",
 ] }
 
@@ -21,4 +21,4 @@ anyhow = "1.0"
 log = "0.4"
 hex = "0.4"     # 之前忘了写这个，解析 MAC 地址需要
 futures = "0.3" # <--- 新增这个，用于处理 Stream
-socket2 = "0.5" # 用于底层 socket 操作，iOS 兼容性更好
+socket2 = "0.6" # 用于底层 socket 操作，iOS 兼容性更好
