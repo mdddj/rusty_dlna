@@ -5,8 +5,8 @@
 import FlutterMacOS
 import Foundation
 
-import network_info_plus
+import connectivity_plus
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
-  NetworkInfoPlusPlugin.register(with: registry.registrar(forPlugin: "NetworkInfoPlusPlugin"))
+  ConnectivityPlusPlugin.register(with: registry.registrar(forPlugin: "ConnectivityPlusPlugin"))
 }

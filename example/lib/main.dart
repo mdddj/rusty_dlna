@@ -1,12 +1,14 @@
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:network_info_plus/network_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rusty_dlna/api/cast.dart';
 import 'package:rusty_dlna/frb_generated.dart';
 
 Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
   // 1. 初始化 Rust 库 (FRB v2)
   await RustLib.init();
   runApp(const MyApp());
@@ -92,9 +94,9 @@ class _HomePageState extends State<HomePage> {
   Future<bool> _requestLocalNetworkPermission() async {
     try {
       // 方法1: 尝试访问 WiFi 信息，这会触发系统权限对话框
-      final info = NetworkInfo();
-      final wifiName = await info.getWifiName();
-      debugPrint('WiFi Name: $wifiName');
+      final List<ConnectivityResult> connectivityResult = await (Connectivity()
+          .checkConnectivity());
+      debugPrint("是否有网络连接:$connectivityResult");
 
       // 方法2: 检查位置权限（某些情况下需要）
       if (Platform.isIOS) {
@@ -105,6 +107,7 @@ class _HomePageState extends State<HomePage> {
             return false;
           }
         }
+        return true;
       }
 
       return true;

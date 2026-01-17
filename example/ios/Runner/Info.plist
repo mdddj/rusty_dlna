@@ -53,5 +53,6 @@
 		</array>
 		<key>NSLocationWhenInUseUsageDescription</key>
 		<string>Location permission is required to access WiFi information</string>
+
 	</dict>
 </plist>

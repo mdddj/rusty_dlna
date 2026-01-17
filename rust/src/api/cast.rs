@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use flutter_rust_bridge::frb;
-use futures::StreamExt;
 use reqwest::Client;
-use ssdp_client::SearchTarget;
+use socket2::{Domain, Protocol, Socket, Type};
+use std::mem::MaybeUninit;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 
 const AV_SERVICE: &str = "urn:schemas-upnp-org:service:AVTransport:1";
@@ -230,51 +231,110 @@ impl ProjectorInfo {
 // --- 1. 扫描功能 (服务发现) ---
 
 pub async fn scan_projectors(timeout_secs: u64) -> Result<Vec<ProjectorInfo>> {
-    let search_target = SearchTarget::RootDevice;
-    let timeout = Duration::from_secs(timeout_secs);
+    // 使用 socket2 实现更底层的 SSDP 扫描，iOS 兼容性更好
+    let socket = create_ssdp_socket()?;
 
-    // 修复点 1: search 函数需要 4 个参数，最后补一个 None
-    // 修复点 2: 这返回的是一个 Stream，不是 Vec
-    let mut stream = ssdp_client::search(&search_target, timeout, 2, None)
-        .await
-        .map_err(|e| {
-            let err_msg = e.to_string();
-            if err_msg.contains("No route to host") || err_msg.contains("os error 65") {
-                anyhow::anyhow!(
-                    "Network connection failed. Please check:\n\
-                    1. Device is connected to WiFi or local network\n\
-                    2. App has network permissions (check platform-specific setup)\n\
-                    3. Firewall is not blocking local network access\n\
-                    4. VPN is disabled (if enabled, try disabling it)\n\
-                    5. Device and DLNA devices are on the same local network\n\
-                    Original error: {}",
-                    err_msg
-                )
-            } else {
-                anyhow::anyhow!("SSDP search failed: {}", err_msg)
-            }
-        })?;
+    // SSDP 多播地址和端口
+    const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
+    const SSDP_PORT: u16 = 1900;
+
+    // 构造 M-SEARCH 请求
+    let search_request = format!(
+        "M-SEARCH * HTTP/1.1\r\n\
+         HOST: {}:{}\r\n\
+         MAN: \"ssdp:discover\"\r\n\
+         MX: {}\r\n\
+         ST: upnp:rootdevice\r\n\
+         \r\n",
+        SSDP_ADDR, SSDP_PORT, timeout_secs
+    );
+
+    // 发送搜索请求
+    let target_addr = SocketAddrV4::new(SSDP_ADDR, SSDP_PORT);
+    socket
+        .send_to(search_request.as_bytes(), &target_addr.into())
+        .context("Failed to send SSDP search request")?;
+
+    // 设置接收超时
+    socket.set_read_timeout(Some(Duration::from_secs(timeout_secs)))?;
 
     let mut devices = Vec::new();
+    let mut buffer: Vec<MaybeUninit<u8>> = vec![MaybeUninit::uninit(); 2048];
+    let start_time = std::time::Instant::now();
 
-    // 修复点 3: 使用异步流的方式遍历结果
-    while let Some(response_result) = stream.next().await {
-        // 流中的每一项也是一个 Result，需要解包
-        if let Ok(response) = response_result {
-            let location = response.location().to_string();
+    // 接收响应
+    while start_time.elapsed() < Duration::from_secs(timeout_secs) {
+        match socket.recv_from(&mut buffer) {
+            Ok((size, _addr)) => {
+                // 安全地转换 MaybeUninit 为初始化的数据
+                let data: Vec<u8> = buffer[..size]
+                    .iter()
+                    .map(|b| unsafe { b.assume_init() })
+                    .collect();
 
-            // 为了防止重复扫描同一个设备，可以先简单的根据 location 去重 (可选)
-            // 这里直接解析
-            if let Ok(info) = parse_device_xml(&location).await {
-                // 简单的去重逻辑：如果列表中还没这个 IP
-                if !devices.iter().any(|d: &ProjectorInfo| d.ip == info.ip) {
-                    devices.push(info);
+                if let Ok(response) = String::from_utf8(data) {
+                    // 解析 LOCATION 头
+                    if let Some(location) = extract_location(&response) {
+                        // 解析设备信息
+                        if let Ok(info) = parse_device_xml(&location).await {
+                            // 去重
+                            if !devices.iter().any(|d: &ProjectorInfo| d.ip == info.ip) {
+                                devices.push(info);
+                            }
+                        }
+                    }
                 }
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                // 超时，正常退出
+                break;
+            }
+            Err(e) => {
+                // 其他错误
+                return Err(anyhow::anyhow!("SSDP receive error: {}", e));
             }
         }
     }
 
     Ok(devices)
+}
+
+// 创建 SSDP socket
+fn create_ssdp_socket() -> Result<Socket> {
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
+        .context("Failed to create socket")?;
+
+    // 设置 socket 选项
+    socket.set_reuse_address(true)?;
+
+    // 绑定到任意端口
+    let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+    socket.bind(&bind_addr.into())?;
+
+    // 设置非阻塞模式
+    socket.set_nonblocking(true)?;
+
+    Ok(socket)
+}
+
+// 从 HTTP 响应中提取 LOCATION 头
+fn extract_location(response: &str) -> Option<String> {
+    for line in response.lines() {
+        if line.to_lowercase().starts_with("location:") {
+            return line
+                .split(':')
+                .skip(1)
+                .collect::<Vec<_>>()
+                .join(":")
+                .trim()
+                .to_string()
+                .into();
+        }
+    }
+    None
 }
 
 // 辅助：获取并解析设备描述 XML

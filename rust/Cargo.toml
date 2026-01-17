@@ -14,10 +14,11 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json",
 ] }
 
-ssdp-client = "2.0"
+# ssdp-client = "2.0"  # 在 iOS 上有问题，改用手动实现
 xml-rs = "1"
-regex = "1.5"       # 用于快速提取 XML 中的 URL
+regex = "1.5"   # 用于快速提取 XML 中的 URL
 anyhow = "1.0"
 log = "0.4"
-hex = "0.4"         # 之前忘了写这个，解析 MAC 地址需要
-futures = "0.3"     # <--- 新增这个，用于处理 Stream
+hex = "0.4"     # 之前忘了写这个，解析 MAC 地址需要
+futures = "0.3" # <--- 新增这个，用于处理 Stream
+socket2 = "0.5" # 用于底层 socket 操作，iOS 兼容性更好

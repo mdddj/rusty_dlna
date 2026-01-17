@@ -2,13 +2,16 @@
 
 ## Problem
 
-On iOS 14+, apps need explicit user permission to access the local network for device discovery (SSDP/mDNS). Without this permission, you'll get the error:
+On iOS 14+, apps need explicit user permission to access the local network for device discovery (SSDP/mDNS). Additionally, iOS 14.5+ has stricter enforcement of multicast permissions, which can cause SSDP discovery to fail even with proper Info.plist configuration.
 
+Common errors:
 ```
 AnyhowException(SSDP search failed: io error: No route to host (os error 65))
 ```
 
-## Solution
+## Solution (v0.2.0+)
+
+Starting from version 0.2.0, this plugin uses a custom SSDP implementation with `socket2` for better iOS compatibility, avoiding the issues with the `ssdp-client` crate on iOS.
 
 ### 1. Configure Info.plist
 
