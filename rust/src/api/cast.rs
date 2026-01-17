@@ -314,6 +314,18 @@ fn create_ssdp_socket() -> Result<Socket> {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
     socket.bind(&bind_addr.into())?;
 
+    // iOS 特定：设置多播选项
+    const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
+
+    // 加入多播组（iOS 需要，即使只是发送）
+    socket.join_multicast_v4(&SSDP_ADDR, &Ipv4Addr::UNSPECIFIED)?;
+
+    // 设置多播 TTL
+    socket.set_multicast_ttl_v4(2)?;
+
+    // 允许多播回环（接收自己发送的包）
+    socket.set_multicast_loop_v4(true)?;
+
     // 设置非阻塞模式
     socket.set_nonblocking(true)?;
 
