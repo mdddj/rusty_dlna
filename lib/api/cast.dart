@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'cast.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `get_av_url`, `get_rc_url`, `parse_device_xml`, `send_soap_action`
+// These functions are ignored because they are not marked as `pub`: `collect_ssdp_responses`, `create_ssdp_socket`, `extract_location`, `get_av_url`, `get_local_ip`, `get_rc_url`, `parse_device_xml`, `send_soap_action`, `try_broadcast_ssdp`, `try_multicast_ssdp`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `eq`, `fmt`, `fmt`
 
 Future<List<ProjectorInfo>> scanProjectors({required BigInt timeoutSecs}) =>

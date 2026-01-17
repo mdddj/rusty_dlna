@@ -231,9 +231,6 @@ impl ProjectorInfo {
 // --- 1. 扫描功能 (服务发现) ---
 
 pub async fn scan_projectors(timeout_secs: u64) -> Result<Vec<ProjectorInfo>> {
-    // 使用 socket2 实现更底层的 SSDP 扫描，iOS 兼容性更好
-    let socket = create_ssdp_socket()?;
-
     // SSDP 多播地址和端口
     const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
     const SSDP_PORT: u16 = 1900;
@@ -249,35 +246,142 @@ pub async fn scan_projectors(timeout_secs: u64) -> Result<Vec<ProjectorInfo>> {
         SSDP_ADDR, SSDP_PORT, timeout_secs
     );
 
-    // 发送搜索请求
+    let mut devices = Vec::new();
+    
+    // 尝试方法1: 标准组播 SSDP
+    println!("SSDP: Trying multicast method...");
+    match try_multicast_ssdp(&search_request, timeout_secs).await {
+        Ok(found_devices) => {
+            println!("SSDP: Multicast succeeded, found {} devices", found_devices.len());
+            for dev in found_devices {
+                if !devices.iter().any(|d: &ProjectorInfo| d.ip == dev.ip) {
+                    devices.push(dev);
+                }
+            }
+        }
+        Err(e) => {
+            println!("SSDP: Multicast failed: {}, trying broadcast method...", e);
+            
+            // 方法2: 使用广播发送到子网
+            match try_broadcast_ssdp(&search_request, timeout_secs).await {
+                Ok(found_devices) => {
+                    println!("SSDP: Broadcast succeeded, found {} devices", found_devices.len());
+                    for dev in found_devices {
+                        if !devices.iter().any(|d: &ProjectorInfo| d.ip == dev.ip) {
+                            devices.push(dev);
+                        }
+                    }
+                }
+                Err(e2) => {
+                    println!("SSDP: Broadcast also failed: {}", e2);
+                    // 如果两种方法都失败，返回原始错误
+                    return Err(e.context("Both multicast and broadcast SSDP methods failed"));
+                }
+            }
+        }
+    }
+
+    Ok(devices)
+}
+
+// 尝试使用组播发送 SSDP
+async fn try_multicast_ssdp(search_request: &str, timeout_secs: u64) -> Result<Vec<ProjectorInfo>> {
+    const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
+    const SSDP_PORT: u16 = 1900;
+    
+    let socket = create_ssdp_socket()?;
+    
+    // 发送搜索请求到组播地址
     let target_addr = SocketAddrV4::new(SSDP_ADDR, SSDP_PORT);
     socket
         .send_to(search_request.as_bytes(), &target_addr.into())
-        .context("Failed to send SSDP search request")?;
+        .context("Failed to send SSDP multicast request")?;
+    
+    println!("SSDP: Multicast request sent successfully");
+    
+    collect_ssdp_responses(socket, timeout_secs).await
+}
 
-    // 设置接收超时
+// 尝试使用广播发送 SSDP（iOS 不需要特殊权限）
+async fn try_broadcast_ssdp(search_request: &str, timeout_secs: u64) -> Result<Vec<ProjectorInfo>> {
+    use std::net::UdpSocket;
+    
+    const SSDP_PORT: u16 = 1900;
+    
+    // 获取本地 IP
+    let local_ip = get_local_ip()
+        .ok_or_else(|| anyhow::anyhow!("Failed to detect local IP address"))?;
+    
+    // 计算广播地址 (假设 /24 子网)
+    let octets = local_ip.octets();
+    let broadcast_ip = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+    
+    println!("SSDP: Using broadcast address: {}", broadcast_ip);
+    
+    // 创建 UDP socket
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.set_broadcast(true)?;
     socket.set_read_timeout(Some(Duration::from_secs(timeout_secs)))?;
+    
+    // 发送到广播地址
+    let target_addr = SocketAddrV4::new(broadcast_ip, SSDP_PORT);
+    socket.send_to(search_request.as_bytes(), target_addr)
+        .context("Failed to send SSDP broadcast request")?;
+    
+    println!("SSDP: Broadcast request sent successfully");
+    
+    // 也尝试发送到 255.255.255.255
+    let _ = socket.send_to(search_request.as_bytes(), "255.255.255.255:1900");
+    
+    // 收集响应
+    let mut devices = Vec::new();
+    let mut buffer = [0u8; 2048];
+    let start_time = std::time::Instant::now();
+    
+    socket.set_nonblocking(true)?;
+    
+    while start_time.elapsed() < Duration::from_secs(timeout_secs) {
+        match socket.recv_from(&mut buffer) {
+            Ok((size, _addr)) => {
+                if let Ok(response) = String::from_utf8(buffer[..size].to_vec()) {
+                    if let Some(location) = extract_location(&response) {
+                        if let Ok(info) = parse_device_xml(&location).await {
+                            if !devices.iter().any(|d: &ProjectorInfo| d.ip == info.ip) {
+                                devices.push(info);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => break,
+        }
+    }
+    
+    Ok(devices)
+}
 
+// 收集 SSDP 响应
+async fn collect_ssdp_responses(socket: Socket, timeout_secs: u64) -> Result<Vec<ProjectorInfo>> {
+    socket.set_read_timeout(Some(Duration::from_secs(timeout_secs)))?;
+    
     let mut devices = Vec::new();
     let mut buffer: Vec<MaybeUninit<u8>> = vec![MaybeUninit::uninit(); 2048];
     let start_time = std::time::Instant::now();
 
-    // 接收响应
     while start_time.elapsed() < Duration::from_secs(timeout_secs) {
         match socket.recv_from(&mut buffer) {
             Ok((size, _addr)) => {
-                // 安全地转换 MaybeUninit 为初始化的数据
                 let data: Vec<u8> = buffer[..size]
                     .iter()
                     .map(|b| unsafe { b.assume_init() })
                     .collect();
 
                 if let Ok(response) = String::from_utf8(data) {
-                    // 解析 LOCATION 头
                     if let Some(location) = extract_location(&response) {
-                        // 解析设备信息
                         if let Ok(info) = parse_device_xml(&location).await {
-                            // 去重
                             if !devices.iter().any(|d: &ProjectorInfo| d.ip == info.ip) {
                                 devices.push(info);
                             }
@@ -289,11 +393,9 @@ pub async fn scan_projectors(timeout_secs: u64) -> Result<Vec<ProjectorInfo>> {
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                // 超时，正常退出
                 break;
             }
             Err(e) => {
-                // 其他错误
                 return Err(anyhow::anyhow!("SSDP receive error: {}", e));
             }
         }
@@ -318,18 +420,21 @@ fn create_ssdp_socket() -> Result<Socket> {
     const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 
     // 获取本地 IP 地址用于加入多播组
-    let local_ip = get_local_ip().unwrap_or(Ipv4Addr::UNSPECIFIED);
+    let local_ip = get_local_ip();
+    println!("SSDP: Detected local IP: {:?}", local_ip);
+    
+    let local_ip = local_ip.ok_or_else(|| anyhow::anyhow!("Failed to detect local IP address"))?;
 
     // 加入多播组（iOS 需要，即使只是发送）
+    println!("SSDP: Joining multicast group {} on interface {}", SSDP_ADDR, local_ip);
     socket.join_multicast_v4(&SSDP_ADDR, &local_ip)?;
 
     // 设置多播 TTL
     socket.set_multicast_ttl_v4(2)?;
 
     // 设置多播接口（iOS 需要明确指定）
-    if local_ip != Ipv4Addr::UNSPECIFIED {
-        socket.set_multicast_if_v4(&local_ip)?;
-    }
+    println!("SSDP: Setting multicast interface to {}", local_ip);
+    socket.set_multicast_if_v4(&local_ip)?;
 
     // 允许多播回环（接收自己发送的包）
     socket.set_multicast_loop_v4(true)?;
@@ -340,20 +445,114 @@ fn create_ssdp_socket() -> Result<Socket> {
     Ok(socket)
 }
 
-// 获取本地 IP 地址
+// 获取本地 IP 地址（过滤 VPN/代理接口）
 fn get_local_ip() -> Option<Ipv4Addr> {
     use std::net::UdpSocket;
 
-    // 尝试连接到外部地址来获取本地 IP（不会真正发送数据）
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("8.8.8.8:80").ok()?;
+    // 判断是否是 VPN/代理软件使用的虚拟 IP 地址
+    fn is_vpn_ip(ip: &Ipv4Addr) -> bool {
+        let octets = ip.octets();
+        // 198.18.0.0/15 - 通常被 Surge、Shadowrocket 等代理软件使用
+        if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
+            return true;
+        }
+        // 100.64.0.0/10 - CGNAT，有时也被 VPN 使用
+        if octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127 {
+            return true;
+        }
+        // 10.8.0.0/24, 10.9.0.0/24 - 常见 OpenVPN 地址段
+        if octets[0] == 10 && (octets[1] == 8 || octets[1] == 9) && octets[2] == 0 {
+            return true;
+        }
+        false
+    }
 
-    if let Ok(addr) = socket.local_addr() {
-        if let std::net::SocketAddr::V4(addr_v4) = addr {
-            return Some(*addr_v4.ip());
+    // 判断是否是有效的局域网 IP
+    fn is_valid_lan_ip(ip: &Ipv4Addr) -> bool {
+        if ip.is_loopback() || ip.is_unspecified() || ip.is_link_local() {
+            return false;
+        }
+        // 过滤 VPN IP
+        if is_vpn_ip(ip) {
+            return false;
+        }
+        // 允许私有地址（常见局域网）
+        let octets = ip.octets();
+        // 192.168.x.x
+        if octets[0] == 192 && octets[1] == 168 {
+            return true;
+        }
+        // 10.x.x.x (但排除上面已过滤的 VPN 段)
+        if octets[0] == 10 {
+            return true;
+        }
+        // 172.16.0.0 - 172.31.255.255
+        if octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31 {
+            return true;
+        }
+        false
+    }
+
+    // 方法1: 尝试连接到局域网网关来获取 WiFi IP（避免经过 VPN）
+    // 使用常见的局域网网关地址
+    let gateway_addrs = ["192.168.1.1:80", "192.168.0.1:80", "10.0.0.1:80", "172.16.0.1:80"];
+    
+    for gateway in &gateway_addrs {
+        if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+            if socket.connect(*gateway).is_ok() {
+                if let Ok(addr) = socket.local_addr() {
+                    if let std::net::SocketAddr::V4(addr_v4) = addr {
+                        let ip = *addr_v4.ip();
+                        if is_valid_lan_ip(&ip) {
+                            println!("SSDP: Found valid LAN IP via gateway {}: {}", gateway, ip);
+                            return Some(ip);
+                        }
+                    }
+                }
+            }
         }
     }
 
+    // 方法2: 回退到原始方法，但验证结果
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                if let std::net::SocketAddr::V4(addr_v4) = addr {
+                    let ip = *addr_v4.ip();
+                    if is_valid_lan_ip(&ip) {
+                        println!("SSDP: Found valid LAN IP via external connect: {}", ip);
+                        return Some(ip);
+                    } else {
+                        println!("SSDP: Detected IP {} appears to be VPN/proxy interface, skipping", ip);
+                    }
+                }
+            }
+        }
+    }
+
+    // 方法3: 遍历所有网络接口寻找有效的局域网 IP
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "linux", target_os = "android"))]
+    {
+        if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+            // 尝试一些常见的局域网广播地址
+            let broadcast_addrs = ["192.168.1.255:1900", "192.168.0.255:1900", "10.0.0.255:1900"];
+            for addr in &broadcast_addrs {
+                if socket.connect(*addr).is_ok() {
+                    if let Ok(local) = socket.local_addr() {
+                        if let std::net::SocketAddr::V4(addr_v4) = local {
+                            let ip = *addr_v4.ip();
+                            if is_valid_lan_ip(&ip) {
+                                println!("SSDP: Found valid LAN IP via broadcast probe: {}", ip);
+                                return Some(ip);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("SSDP: Warning - Could not find a valid LAN IP address. VPN/proxy may be blocking local network access.");
     None
 }
 

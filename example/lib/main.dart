@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rusty_dlna/api/cast.dart';
 import 'package:rusty_dlna/frb_generated.dart';
@@ -51,14 +52,7 @@ class _HomePageState extends State<HomePage> {
     if (Platform.isIOS) {
       final granted = await _requestLocalNetworkPermission();
       if (!granted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('需要本地网络权限才能扫描设备，请在设置中允许'),
-              duration: Duration(seconds: 5),
-            ),
-          );
-        }
+        // ... (existing code)
         return;
       }
     }
@@ -67,7 +61,7 @@ class _HomePageState extends State<HomePage> {
     _devices.clear(); // 清空旧列表
 
     try {
-      // 调用 Rust: 扫描 13 秒
+      // 调用 Rust: 扫描 3 秒
       final results = await scanProjectors(timeoutSecs: BigInt.from(3));
       setState(() {
         _devices = results;
@@ -81,9 +75,43 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       debugPrint('扫描出错: $e');
       if (mounted) {
+        final errorMsg = e.toString();
+        String displayMsg = '扫描出错: $e';
+
+        // 针对 iOS 的友好提示
+        if (Platform.isIOS &&
+            (errorMsg.contains("os error 65") ||
+                errorMsg.contains("No route to host"))) {
+          displayMsg = '无法发送 SSDP 请求。请检查 iOS 设置 > 隐私与安全性 > 本地网络，确保应用已获得权限。';
+
+          // 尝试打开设置
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('需要本地网络权限'),
+              content: const Text(
+                '应用无法访问本地网络。请在设置中允许“本地网络”权限，否则无法扫描设备。\n\n错误: No route to host (65)',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    openAppSettings();
+                    Navigator.pop(context);
+                  },
+                  child: const Text('去设置'),
+                ),
+              ],
+            ),
+          );
+        }
+
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('扫描出错: $e')));
+        ).showSnackBar(SnackBar(content: Text(displayMsg)));
       }
     } finally {
       setState(() => _isScanning = false);
@@ -94,20 +122,41 @@ class _HomePageState extends State<HomePage> {
   Future<bool> _requestLocalNetworkPermission() async {
     try {
       // 方法1: 尝试访问 WiFi 信息，这会触发系统权限对话框
+      final info = NetworkInfo();
+      final bssid = await info.getWifiBSSID();
+      debugPrint("当前连接的WiFi BSSID:$bssid");
+      final wifiName = await info.getWifiName();
+      debugPrint("当前连接的WiFi名称:$wifiName");
+
+      // 如果无法获取 WiFi 名称，可能是权限被拒绝，或者没有开启定位（iOS 14+ 部分情况需要）
+      // 虽然拿不到 WiFi 名称不代表一定无法扫描 SSDP，但这是一个强烈的信号。
+
       final List<ConnectivityResult> connectivityResult = await (Connectivity()
           .checkConnectivity());
       debugPrint("是否有网络连接:$connectivityResult");
 
+      if (connectivityResult.contains(ConnectivityResult.none)) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('请先连接 WiFi')));
+        }
+        return false;
+      }
+
       // 方法2: 检查位置权限（某些情况下需要）
       if (Platform.isIOS) {
-        final status = await Permission.locationWhenInUse.status;
+        // 请求位置权限，这对获取 WiFi 信息有帮助，有时也能触发本地网络权限
+        await Permission.location.request();
+        await Permission.locationAlways.request();
+        var status = await Permission.locationWhenInUse.status;
         if (!status.isGranted) {
-          final result = await Permission.locationWhenInUse.request();
-          if (!result.isGranted) {
-            return false;
-          }
+          status = await Permission.locationWhenInUse.request();
         }
-        return true;
+
+        // 即使位置权限被拒绝，我们也可以尝试扫描，因为核心是本地网络权限。
+        // 但如果本地网络权限之前被永久拒绝，这里也没法直接检测出来（除了尝试发包失败）。
+        // 我们可以给用户一个弹窗提示去设置里检查。
       }
 
       return true;
