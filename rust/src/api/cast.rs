@@ -317,11 +317,19 @@ fn create_ssdp_socket() -> Result<Socket> {
     // iOS 特定：设置多播选项
     const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 
+    // 获取本地 IP 地址用于加入多播组
+    let local_ip = get_local_ip().unwrap_or(Ipv4Addr::UNSPECIFIED);
+
     // 加入多播组（iOS 需要，即使只是发送）
-    socket.join_multicast_v4(&SSDP_ADDR, &Ipv4Addr::UNSPECIFIED)?;
+    socket.join_multicast_v4(&SSDP_ADDR, &local_ip)?;
 
     // 设置多播 TTL
     socket.set_multicast_ttl_v4(2)?;
+
+    // 设置多播接口（iOS 需要明确指定）
+    if local_ip != Ipv4Addr::UNSPECIFIED {
+        socket.set_multicast_if_v4(&local_ip)?;
+    }
 
     // 允许多播回环（接收自己发送的包）
     socket.set_multicast_loop_v4(true)?;
@@ -330,6 +338,23 @@ fn create_ssdp_socket() -> Result<Socket> {
     socket.set_nonblocking(true)?;
 
     Ok(socket)
+}
+
+// 获取本地 IP 地址
+fn get_local_ip() -> Option<Ipv4Addr> {
+    use std::net::UdpSocket;
+
+    // 尝试连接到外部地址来获取本地 IP（不会真正发送数据）
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+
+    if let Ok(addr) = socket.local_addr() {
+        if let std::net::SocketAddr::V4(addr_v4) = addr {
+            return Some(*addr_v4.ip());
+        }
+    }
+
+    None
 }
 
 // 从 HTTP 响应中提取 LOCATION 头
