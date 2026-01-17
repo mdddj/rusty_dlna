@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:network_info_plus/network_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:rusty_dlna/api/cast.dart';
 import 'package:rusty_dlna/frb_generated.dart';
 
@@ -41,6 +45,22 @@ class _HomePageState extends State<HomePage> {
 
   // 扫描设备的方法
   Future<void> _handleScan() async {
+    // iOS: 触发本地网络权限对话框
+    if (Platform.isIOS) {
+      final granted = await _requestLocalNetworkPermission();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('需要本地网络权限才能扫描设备，请在设置中允许'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
     setState(() => _isScanning = true);
     _devices.clear(); // 清空旧列表
 
@@ -65,6 +85,32 @@ class _HomePageState extends State<HomePage> {
       }
     } finally {
       setState(() => _isScanning = false);
+    }
+  }
+
+  // 请求 iOS 本地网络权限
+  Future<bool> _requestLocalNetworkPermission() async {
+    try {
+      // 方法1: 尝试访问 WiFi 信息，这会触发系统权限对话框
+      final info = NetworkInfo();
+      final wifiName = await info.getWifiName();
+      debugPrint('WiFi Name: $wifiName');
+
+      // 方法2: 检查位置权限（某些情况下需要）
+      if (Platform.isIOS) {
+        final status = await Permission.locationWhenInUse.status;
+        if (!status.isGranted) {
+          final result = await Permission.locationWhenInUse.request();
+          if (!result.isGranted) {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('权限请求失败: $e');
+      return false;
     }
   }
 

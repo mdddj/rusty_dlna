@@ -78,6 +78,21 @@ Add to `ios/Runner/Info.plist`:
 <array>
     <string>_ssdp._udp</string>
 </array>
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>Location permission is required to access WiFi information</string>
+```
+
+**Important for iOS 14+**: The local network permission dialog will appear automatically when you first attempt to scan for devices. To ensure the permission is properly requested, you can use `network_info_plus` package to trigger the permission dialog before scanning:
+
+```dart
+import 'package:network_info_plus/network_info_plus.dart';
+
+// Trigger permission dialog by accessing WiFi info
+final info = NetworkInfo();
+await info.getWifiName(); // This triggers the local network permission dialog
+
+// Now you can scan for devices
+final devices = await scanProjectors(timeoutSecs: BigInt.from(5));
 ```
 
 ## Usage
@@ -186,8 +201,16 @@ This error typically occurs when:
 
 **Solutions:**
 
+- **iOS 14+**: The local network permission dialog must be triggered before scanning. See [iOS Setup Guide](IOS_SETUP.md) for detailed instructions. Quick fix:
+  ```dart
+  // Add network_info_plus to pubspec.yaml
+  // Trigger permission dialog before scanning
+  if (Platform.isIOS) {
+    await NetworkInfo().getWifiName(); // Triggers permission dialog
+  }
+  final devices = await scanProjectors(timeoutSecs: BigInt.from(5));
+  ```
 - **Android**: Verify all permissions in AndroidManifest.xml are added
-- **iOS**: Check Info.plist has NSLocalNetworkUsageDescription and NSBonjourServices
 - **macOS**: Ensure network entitlements are properly configured
 - **All platforms**: Try connecting to the same WiFi network as your DLNA device
 
