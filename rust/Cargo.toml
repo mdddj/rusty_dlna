@@ -9,10 +9,16 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 flutter_rust_bridge = "=2.11.1"
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.13", default-features = false, features = [
-    "rustls",
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls-manual-roots",
     "json",
 ] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+] }
+
 
 # ssdp-client = "2.0"  # 在 iOS 上有问题，改用手动实现
 xml-rs = "1"

@@ -1,19 +1,31 @@
 PODS:
+  - connectivity_plus (0.0.1):
+    - FlutterMacOS
   - FlutterMacOS (1.0.0)
+  - network_info_plus (0.0.1):
+    - FlutterMacOS
   - rusty_dlna (0.0.1)
 
 DEPENDENCIES:
+  - connectivity_plus (from `Flutter/ephemeral/.symlinks/plugins/connectivity_plus/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
+  - network_info_plus (from `Flutter/ephemeral/.symlinks/plugins/network_info_plus/macos`)
   - rusty_dlna (from `Flutter/ephemeral/.symlinks/plugins/rusty_dlna/macos`)
 
 EXTERNAL SOURCES:
+  connectivity_plus:
+    :path: Flutter/ephemeral/.symlinks/plugins/connectivity_plus/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
+  network_info_plus:
+    :path: Flutter/ephemeral/.symlinks/plugins/network_info_plus/macos
   rusty_dlna:
     :path: Flutter/ephemeral/.symlinks/plugins/rusty_dlna/macos
 
 SPEC CHECKSUMS:
+  connectivity_plus: 0a976dfd033b59192912fa3c6c7b54aab5093802
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  network_info_plus: 2cb02d8435635eae13b3b79279681985121cf30c
   rusty_dlna: 04f3e22e9465a1b2ff090ee137f950fb8c7341ea
 
 PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009

@@ -308,30 +308,53 @@ async fn try_broadcast_ssdp(search_request: &str, timeout_secs: u64) -> Result<V
     
     const SSDP_PORT: u16 = 1900;
     
-    // 获取本地 IP
-    let local_ip = get_local_ip()
-        .ok_or_else(|| anyhow::anyhow!("Failed to detect local IP address"))?;
-    
-    // 计算广播地址 (假设 /24 子网)
-    let octets = local_ip.octets();
-    let broadcast_ip = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
-    
-    println!("SSDP: Using broadcast address: {}", broadcast_ip);
-    
     // 创建 UDP socket
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_broadcast(true)?;
     socket.set_read_timeout(Some(Duration::from_secs(timeout_secs)))?;
     
-    // 发送到广播地址
-    let target_addr = SocketAddrV4::new(broadcast_ip, SSDP_PORT);
-    socket.send_to(search_request.as_bytes(), target_addr)
-        .context("Failed to send SSDP broadcast request")?;
-    
-    println!("SSDP: Broadcast request sent successfully");
-    
-    // 也尝试发送到 255.255.255.255
-    let _ = socket.send_to(search_request.as_bytes(), "255.255.255.255:1900");
+    let mut broadcast_targets = Vec::new();
+    if let Some(local_ip) = get_local_ip() {
+        // 计算广播地址 (假设 /24 子网)
+        let octets = local_ip.octets();
+        let subnet_broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+        println!("SSDP: Using subnet broadcast address: {}", subnet_broadcast);
+        broadcast_targets.push(subnet_broadcast);
+    } else {
+        println!(
+            "SSDP: No explicit LAN IP detected, falling back to limited broadcast only"
+        );
+    }
+
+    let limited_broadcast = Ipv4Addr::new(255, 255, 255, 255);
+    if !broadcast_targets.contains(&limited_broadcast) {
+        broadcast_targets.push(limited_broadcast);
+    }
+
+    let mut sent = false;
+    let mut last_err = None;
+    for broadcast_ip in broadcast_targets {
+        let target_addr = SocketAddrV4::new(broadcast_ip, SSDP_PORT);
+        match socket.send_to(search_request.as_bytes(), target_addr) {
+            Ok(_) => {
+                println!("SSDP: Broadcast request sent to {}", broadcast_ip);
+                sent = true;
+            }
+            Err(err) => {
+                println!(
+                    "SSDP: Failed to send broadcast request to {}: {}",
+                    broadcast_ip, err
+                );
+                last_err = Some(err);
+            }
+        }
+    }
+
+    if !sent {
+        return Err(last_err
+            .unwrap_or_else(|| std::io::Error::other("No SSDP broadcast target available")))
+        .context("Failed to send SSDP broadcast request");
+    }
     
     // 收集响应
     let mut devices = Vec::new();
@@ -420,21 +443,43 @@ fn create_ssdp_socket() -> Result<Socket> {
     const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 
     // 获取本地 IP 地址用于加入多播组
-    let local_ip = get_local_ip();
-    println!("SSDP: Detected local IP: {:?}", local_ip);
-    
-    let local_ip = local_ip.ok_or_else(|| anyhow::anyhow!("Failed to detect local IP address"))?;
+    let detected_local_ip = get_local_ip();
+    println!("SSDP: Detected local IP: {:?}", detected_local_ip);
+
+    let multicast_if = detected_local_ip.unwrap_or(Ipv4Addr::UNSPECIFIED);
+    if detected_local_ip.is_none() {
+        println!("SSDP: Falling back to default multicast interface");
+    }
 
     // 加入多播组（iOS 需要，即使只是发送）
-    println!("SSDP: Joining multicast group {} on interface {}", SSDP_ADDR, local_ip);
-    socket.join_multicast_v4(&SSDP_ADDR, &local_ip)?;
+    println!(
+        "SSDP: Joining multicast group {} on interface {}",
+        SSDP_ADDR, multicast_if
+    );
+    if let Err(err) = socket.join_multicast_v4(&SSDP_ADDR, &multicast_if) {
+        if detected_local_ip.is_some() {
+            return Err(err).context("Failed to join SSDP multicast group");
+        }
+        println!(
+            "SSDP: Warning - Failed to join multicast group on default interface: {}",
+            err
+        );
+    }
 
     // 设置多播 TTL
     socket.set_multicast_ttl_v4(2)?;
 
     // 设置多播接口（iOS 需要明确指定）
-    println!("SSDP: Setting multicast interface to {}", local_ip);
-    socket.set_multicast_if_v4(&local_ip)?;
+    println!("SSDP: Setting multicast interface to {}", multicast_if);
+    if let Err(err) = socket.set_multicast_if_v4(&multicast_if) {
+        if detected_local_ip.is_some() {
+            return Err(err).context("Failed to set SSDP multicast interface");
+        }
+        println!(
+            "SSDP: Warning - Failed to set default multicast interface: {}",
+            err
+        );
+    }
 
     // 允许多播回环（接收自己发送的包）
     socket.set_multicast_loop_v4(true)?;

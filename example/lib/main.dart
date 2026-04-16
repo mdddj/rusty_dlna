@@ -73,6 +73,8 @@ class _HomePageState extends State<HomePage> {
         ).showSnackBar(const SnackBar(content: Text('未发现设备，请检查是否在同一 WiFi')));
       }
     } catch (e) {
+    
+      debugPrint("错误类型:${e.runtimeType}");
       debugPrint('扫描出错: $e');
       if (mounted) {
         final errorMsg = e.toString();
@@ -107,6 +109,11 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
           );
+        }
+
+        if (errorMsg.contains("Failed to detect local IP address") ||
+            errorMsg.contains("VPN/proxy")) {
+          displayMsg = '未检测到可用的局域网网卡。请关闭 VPN/代理，确认设备已连接同一 WiFi 后重试。';
         }
 
         ScaffoldMessenger.of(
